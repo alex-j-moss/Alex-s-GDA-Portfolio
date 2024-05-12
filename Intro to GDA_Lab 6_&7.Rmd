@@ -1,0 +1,551 @@
+---
+title: "R Notebook"
+author: "Alex Moss"
+Due Date: "November 15th, 2023"
+output: html_notebook
+---
+
+## Task 1 + 2
+Before getting into the nitty gritty details of this lab, the data needs to be 
+unzipped, placed in the working directory and loaded into the R session. 
+The required packages need to be loaded into the R session.  
+
+
+```{r}
+setwd(choose.dir())
+```
+
+```{r}
+library(tidyverse)
+library(sf)
+library(plotly)
+library(caret)
+library(likert)
+library(grid)
+library(gridExtra)
+library(ggpubr)
+library(dplyr)
+```
+
+```{r}
+world_data <- st_read("world.shp")
+```
+
+It doesn't hurt to do a little check on the data that was just loaded into the 
+session. The following two lines of code are used to check the column names 
+and data type of the data set. 
+
+
+
+```{r}
+names(world_data)
+class(world_data)
+```
+
+# Task 3
+Task 3 involves preparing the data for training and validation. This will 
+include creating our target variable, eliminating any problem variables 
+(geometry column), selecting predictors, and removing any observations 
+missing data. 
+
+```{r}
+world_data_nogeom <- world_data %>%
+  st_drop_geometry()
+```
+
+Firstly,  the geometry column is removed so that it does not cause issues during 
+the modelling process of the lab.
+
+```{r}
+HLGDP_world_data_nogeom <- world_data_nogeom %>%
+  mutate(gdp_high_low = case_when(
+    GDP_CAP >= (median(GDP_CAP)) ~ "High",
+    GDP_CAP < (median(GDP_CAP)) ~ "Low"
+         ))
+```
+
+Next, a new column was created for our target variable. We named it gdp_high_low,
+and decided to give this variable two possible values: "high" or "low". Any 
+country with a GDP_CAP value that is greater or equal to the median will have a 
+"high" gdp_high_low, and any country with a GDP_CAP value that is less than the 
+median will have a "low" gdp_high_low.
+
+
+The challenging portion of this task is to select good, quality predictors for 
+our model. Categorical variables were avoided to keep things simple given this 
+lab is introducing new concepts to me. Region and climate were considered for 
+the model but for the sake of simplicity, were left out. Calories and aids were
+left out because it looked like they were missing a number of values for several 
+countries. Both variables would have made quality predictors, however, preserving
+as many observations as possible given the small data set made more sense.
+Birth to death ratio was selected instead of the individual birth 
+rates and death rates. This is because birth to death ratio only takes up one 
+predictor slot while just being a ratio of the birth and death ratios.
+Literacy as the total % of people who read was also chosen
+instead of % of males and % of females who read. This was not the ideal choice 
+as % of females who read would have been a very important predictor for gdp per 
+capita. However, when looking over both % of males and females who read, many 0
+values can be observed, meaning a large number of countries would need to be 
+omitted from the model. Given the overall small number of countries to begin with,
+the decision to go with literacy as the total % of people who read made more sense.
+Country names and 3-digit country abbreviations were also left out as it was 
+deemed they did not bring enough value to the model. The unique column is simply 
+a column acting as a unique row identifier so that was also excluded from the model.
+
+
+This meant 12 variables were left to choose from for the 10 predictors. Two
+of these were population variables, so  total population (POP_CNTRY) was chosen
+for the model and POPULATN (Population in thousands) was left out. With one more 
+variable to exclude from the model, the final variable to leave out was between
+total country area or landlocked. For the sake of keeping all of the variables 
+numeric, and because I was worried any non-numeric variable would cause issues,
+the landlocked variable was left behind.
+
+
+```{r}
+world_data_sub <- HLGDP_world_data_nogeom %>%
+  select("SQKM_CNTRY","POP_CNTRY", "POP_INCR", "B_TO_D", "LIFEEXPF", 
+         "LIFEEXPM", "URBAN", "LITERACY","FERTILTY", "BABYMORT", "gdp_high_low")
+```
+
+This code creates a new data set that only includes our 10 predictor variables 
+that were selected and our target variable that was created. 
+
+### Side Note 2
+A little further down, I've got some side notes mentioning some issues I was 
+encountering while trying to run the model using the Classification and 
+Regression Trees algorithm. I figured out that my original renaming of the 
+variables included spaces and special characters, causing that model in 
+particular to run into errors. This time, I kept the original variable names to 
+avoid running into the same errors.
+
+To finish off task 3, rows of data that are missing values were removed.
+
+```{r}
+world_data_filter <- world_data_sub %>% 
+  filter("People Who Read (%)" > 0.0 | "Fertility: Average Number of Kids" > 0.0)
+```
+
+
+I noticed four different rows that either had a value of 0 for Literacy or 
+Fertility. I tried using logical indexing to remove those rows but had no luck. 
+In the next chunk of code, I will remove these rows individually.
+
+```{r}
+rows_to_remove <- c(12, 35, 67, 97)
+world_data_filter <- world_data_sub[-rows_to_remove, ]
+```
+
+### Side Note
+In my first go through of this lab, I skipped this step. I should have double
+checked what type of variable my target variable was being passed as.
+```{r}
+str(world_data_filter)
+```
+
+### Side Note Continued
+From this code, I can see that my target variable is being passed as a 
+character string. This may be causing me issues with the Classification and 
+Regression Trees algorithm. Curiously enough, the other algorithms had no 
+trouble running. There may be some unseen issues occurring that I was unable to
+notice but I was able to create training and validation models even with 
+gdp_high_low being a character string. This time, I am going to use a chunk of 
+code that will re-cast my target variable as a factor, which will hopefully 
+resolve my issues.
+
+```{r}
+world_data_filter$gdp_high_low <- as.factor(world_data_filter$gdp_high_low)
+```
+
+Let's run the same code as earlier to verify it is no longer a character string.
+
+```{r}
+str(world_data_filter)
+```
+
+Finally, we scale the predictor variables using a z-transformation.
+```{r}
+world_data_scaled <- world_data_filter %>% 
+ mutate(across(.cols = 1:10, ~ as.vector(scale(.)), .names = "scaled_{.col}"))
+world_data_final <- world_data_scaled %>% 
+ select(-c(1:10))
+```
+
+Task 3 is finished and the data has been prepped.
+
+# Task 4
+Task 4 involves creating a training and a validation data set from our now 
+prepped data set.
+
+```{r}
+set.seed(777)
+inTraining <- createDataPartition(world_data_filter$gdp_high_low, p=0.75, list=FALSE)
+training <- world_data_filter[inTraining,]
+validation <- world_data_filter[-inTraining,]
+```
+
+First thing noted after this chunk of code was run is that the data did not get 
+properly split between training and validation. Training should have 78 
+observations, not 79, and validation should have 26 observations, not 25. 
+
+# Task 5
+In task 5, our training model parameters need to be setup so that the model uses
+cross validation applied 10 fold to avoid over fitting. Accuracy will be used as 
+the metric in which we measure success for our models.
+
+```{r}
+control <- trainControl(method="cv", number=10)
+metric <- "Accuracy"
+```
+
+As seen in the above chunk of code, an object named "control" was created. In that
+object, the train control function from the caret package was used to specify 
+that the cross validation technique (method = cv) will be used,and applied 
+10 fold (number = 10). Then, the metric was set to "accuracy", which will be 
+how performance will be measured for each algorithm. 
+
+# Task 6
+Task 6 is where we train our model using the five appointed algorithms:
+• Linear Discriminant Analysis
+• Classification and Regression Trees
+• k-Nearest Neighbors
+• Support Vector Machines
+• Logistic Regression
+
+## Linear Discriminant Analysis
+```{r}
+set.seed(777)
+fit.lda <- train(gdp_high_low~., data=training, method="lda", metric=metric,
+                 trControl=control)
+predictions1 <- predict(fit.lda, validation)
+predictions1
+```
+
+The model above using the LDA algorithm to run the training and validation models
+can be used as a template for the other four algorithms as well. The only thing
+that needs to be changed is the name of the model and the method that is used,
+the method being which algorithm will be run with the model. 
+
+The set seed function was used so that the results from running the model can be
+reproduced if necessary. The "gdp_high_low~." portion of the model is saying that
+"gdp_high_low" will be our target variable, the variable the model is trying to 
+predict, and the "~." portion is saying that every other variable in the data
+will act as a predictor, variables used to help the model predict either high or
+low gdp. We use the training data set for the training models, the metric function
+we created earlier for the metric and the control function for the training control.
+
+For the validation model, we use the training model that we just ran inside the
+predict function, then specify that we want to use the validation data.
+
+## Classification and Regression Trees
+```{r}
+set.seed(777)
+fit.cart <- train(gdp_high_low~., data=training, method="rpart", metric=metric, 
+                 trControl=control)
+predictions2 <- predict(fit.cart, validation)
+predictions2
+```
+
+## Side Note 3
+Changing gdp_high_low to a factor variable instead of a character string has
+not fixed the issue with the Classification and Regression Trees algorithm. The 
+error: "Error in `[.data.frame`(m, labs) : undefined columns selected" keeps 
+appearing, having issues troubleshooting. However, it seems the variable naming 
+was the culprit for the errors. Keeping the original variable names allowed this 
+model to run successfully. It is interesting that the other models were able to
+run despite having spaces and special characters in the variable names but not
+this one.
+
+
+## k-Nearest Neighbors
+```{r}
+set.seed(777)
+fit.knn <- train(gdp_high_low~., data=training, method="knn", metric=metric, 
+                 trControl=control)
+predictions3 <- predict(fit.knn, validation)
+predictions3
+```
+
+## Support Vector Machines
+```{r}
+set.seed(777)
+fit.svm <- train(gdp_high_low~., data=training, method="svmRadial", metric=metric, 
+                 trControl=control)
+predictions4 <- predict(fit.svm, validation)
+predictions4
+```
+
+## Logistic Regression
+```{r}
+set.seed(777)
+fit.glm <- train(gdp_high_low~., data=training, method="glm", metric=metric, 
+                 trControl=control)
+predictions5 <- predict(fit.glm, validation)
+predictions5
+```
+
+# Task 7
+For task 7, we want to run the validation models using the validation data set, 
+and then use the accuracy classification to measure how successful each model 
+was.
+
+## Linear Discriminant Analysis
+```{r}
+cm1 <- confusionMatrix(predictions1, as.factor(validation$gdp_high_low))
+cm1
+```
+
+Confusion matrix function is used in this code with our validation results from 
+the validation model to print out the results and give us a bit of statistical 
+information about them, including the accuracy value we are looking for.
+
+
+## Classification and Regression Trees
+```{r}
+cm2 <- confusionMatrix(predictions2, as.factor(validation$gdp_high_low))
+cm2
+```
+
+## k-Nearest Neighbors
+```{r}
+cm3 <- confusionMatrix(predictions3, as.factor(validation$gdp_high_low))
+cm3
+```
+
+## Support Vector Machines
+```{r}
+cm4 <- confusionMatrix(predictions4, as.factor(validation$gdp_high_low))
+cm4
+```
+
+## Logistic Regression
+```{r}
+cm5 <- confusionMatrix(predictions5, as.factor(validation$gdp_high_low))
+cm5
+```
+
+
+Using the confusion matrix function shows the accuracy for each model. Accuracy 
+can be used to rank the models and show which ones performed well and which
+ones performed poorly.
+
+The model which performed the best was the model using the Linear Discriminant 
+Analysis algorithm, which had an accuracy value of 0.92.
+
+Next, there were actually three models that had the same accuracy. The 
+Classification and Regression Trees, Support Vector Machines, and Logistic 
+Regression algorithms all sported an accuracy value of 0.88.
+
+Finally, the model that performed the poorest was using the k-Nearest Neighbors 
+algorithm, which only had an accuracy value of 0.5, which is the same as the no 
+information rate of 0.52.
+
+## Task 8
+
+For task 8, a confusion matrix plot will be produced for the best and the worst
+performing models. In this case, the best performing model uses the Support Vector Machines
+algorithm and the worst performing model uses the k-Nearest Neighbors algorithm.
+
+```{r}
+cm_LDA <- as.data.frame(cm1$table)
+cm_LDA$diag <- cm_LDA$Prediction == cm_LDA$Reference 
+cm_LDA$ndiag <- cm_LDA$Prediction != cm_LDA$Reference     
+cm_LDA$Reference <-  reverse.levels(cm_LDA$Reference) 
+cm_LDA$ref_freq <- cm_LDA$Freq * ifelse(is.na(cm_LDA$diag),-1,1)
+
+plt1 <-  ggplot(data = cm_LDA, aes(x = Prediction , y =  Reference, fill = Freq))+
+  scale_x_discrete(position = "top") +
+  geom_tile( data = cm_LDA,aes(fill = ref_freq)) +
+  scale_fill_gradient2(guide = FALSE ,low="red",high="green", midpoint = 0,na.value = 'white') +
+  geom_text(aes(label = Freq), color = 'black', size = 3)+
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        legend.position = "none",
+        panel.border = element_blank(),
+        plot.background = element_blank(),
+        axis.line = element_blank(),
+  )
+plt1
+```
+
+Above is the confusion matrix plot for the Linear Discriminant 
+Analysis algorithm. 
+
+```{r}
+cm_kNA <- as.data.frame(cm3$table)
+cm_kNA$diag <- cm_kNA$Prediction == cm_kNA$Reference 
+cm_kNA$ndiag <- cm_kNA$Prediction != cm_kNA$Reference     
+cm_kNA[cm_kNA == 0] <- NA
+cm_kNA$Reference <-  reverse.levels(cm_kNA$Reference) 
+cm_kNA$ref_freq <- cm_kNA$Freq * ifelse(is.na(cm_kNA$diag),-1,1)
+
+plt1 <-  ggplot(data = cm_kNA, aes(x = Prediction , y =  Reference, fill = Freq))+
+  scale_x_discrete(position = "top") +
+  geom_tile( data = cm_kNA,aes(fill = ref_freq)) +
+  scale_fill_gradient2(guide = FALSE ,low="red",high="green", midpoint = 0,na.value = 'white') +
+  geom_text(aes(label = Freq), color = 'black', size = 3)+
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        legend.position = "none",
+        panel.border = element_blank(),
+        plot.background = element_blank(),
+        axis.line = element_blank(),
+  )
+plt1
+```
+Above is the confusion matrix plot for the k-Nearest Neighbor algorithm.
+
+## Task 9
+In task 9, we take a look at variable importance for the model. For task 3, ten
+predictors were chosen to train and validate the model. Now, the goal is to look
+a little closer at those predictors and figure out which variables are the most
+important when making the predictions. 
+
+### Side Note 4
+After reading your email about variable importance potentially not working for
+all of the models, I ran the code for all five to see what results would be
+produced. No errors occurred, however, looking closely at the lollipop plots,
+I could see that the three models you did not mention in your email (the ones
+you didn't think would work) seem to all show the exact same results. For this
+reason, I am simply leaving them out of the code entirely. I will only be 
+determining variable importance based on the fit.cart and the fit.glm models.
+
+
+```{r}
+# determining variable importance
+importance1 <- varImp(fit.cart)
+importance2 <- varImp(fit.glm)
+
+imp1 <- importance1$importance 
+imp2 <- importance2$importance
+
+
+p1 <- imp1 %>% 
+  mutate(Predictor = rownames(imp1)) %>% 
+  pivot_longer(names_to = "gdp_high_low", values_to = "Importance", -Predictor) %>%
+  ggplot(aes(x=Predictor, y=Importance))+
+  geom_segment(aes(x=Predictor, xend=Predictor, y=0, yend=Importance), color="skyblue") +
+  geom_point(color="blue", size=4, alpha=0.6) +
+  theme_light() +
+  coord_flip() +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.border = element_blank(),
+    axis.ticks.y = element_blank())+
+  ylab("Classification & Regression Tree")+
+  xlab("")
+p1
+
+p2 <- imp2 %>% 
+  mutate(Predictor = rownames(imp2)) %>% 
+  pivot_longer(names_to = "gdp_high_low", values_to = "Importance", -Predictor) %>%
+  ggplot(aes(x=Predictor, y=Importance))+
+  geom_segment(aes(x=Predictor, xend=Predictor, y=0, yend=Importance), color="skyblue") +
+  geom_point(color="blue", size=4, alpha=0.6) +
+  theme_light() +
+  coord_flip() +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.border = element_blank(),
+    axis.ticks.y = element_blank())+
+  ylab("Logistic Regression")+
+  xlab("")
+p2
+```
+
+Below is the code to save the plots as an external png file, with the plots
+being stacked.
+```{r}
+# create the plot
+plot_importance <- ggarrange(p1, p2, ncol = 1, heights = c(4, 4), width = 6) +
+  theme(text = element_text(size = 12)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  theme(plot.margin = margin(2))
+
+# save the plot to a file
+ggsave("plot_importance.png", plot_importance, height = 10, width = 8)
+
+# open the saved image in a viewer
+png_file <- "plot_importance.png"
+browseURL(png_file)
+```
+
+![](plot_importance.png)
+In the code below, a bar plot showing the overall rank of all ten predictors, only
+using variable importance from the CART and GLM models.The predictors are given 
+a relative score between 0 and 100 for their importance.
+
+```{r}
+# Calculate the average importance score for each predictor variable across all models
+average_importance <- rowMeans(cbind(imp1, imp2))
+
+# Create a data frame for plotting
+importance_df <- data.frame(Predictor = names(average_importance), Importance = average_importance)
+
+# Sort the data frame by importance score in descending order
+importance_df <- importance_df[order(importance_df$Importance, decreasing = TRUE), ]
+
+# Create the plot
+library(ggplot2)
+
+ggplot(importance_df, aes(x = reorder(Predictor, -Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "pink") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Predictor", y = "Average Importance Score") +
+  ggtitle("Overall Predictor Importance Across All Models")
+```
+From the plot, the most important variables are male and female life expectancy,
+and baby mortality rate. The least important variables according to the plot is 
+percentage of population in a city and total area of the country.
+
+## Summary / Final Thoughts
+
+I spent a good chunk of time tinkering with this lab, looking at the data, etc.
+I believe that the data set we worked with was quite limiting in a couple of ways. 
+Given that there were only 108 countries within the data to begin with, 
+I based my predictor selection on limiting the number of countries that needed to 
+be removed. A good chunk of the variables for this data set had many null or 
+0 values. These variables included AIDS, Calories, and male & female literacy, 
+which all would have made for good predictors in my opinion. If I had selected 
+them, some 30-40 countries would have needed to be removed, which would have 
+been too many in my opinion. There were also some categorical variables like 
+climate and region that could have made for interesting predictors but given 
+this was my first time tackling a lab like this, and taking into account your 
+warning in the lab instructions about the categorical variables, I thought they 
+needed to be left out. 
+
+The next weird hitch I found when going through this lab was dividing up the 
+training and validation data. The data refused to be properly split into 75/25,
+despite there being a good number to create the split (104 countries made it
+past the cut, 75% should have given me 78 for training, and left 26 for validation).
+
+After fixing my errors with the CART algorithm, I did manage to get all five 
+models to run. However, one thing I noticed when printing out the 
+confusion matrix function to get the accuracy values is that depending on 
+what set.seed was used, my results varied quite a bit. For example, with the
+k-Nearest Neighbors algorithm, I saw accuracy values that ranged from 0.44 to 
+0.68. The LDA algorithm produced accuracy values ranging from 0.74 to 0.96. The
+other three algorithms weren't quite as varied but still produced accuracy 
+values that ranged from 0.78 to 0.94. I believe the size of the data set is the
+culprit for this large accuracy variance. 
+
+For variable importance, due to only two of five models giving us data for 
+calculating this, I'm not putting a whole lot of stock into it. I'd be curious
+to understand why only CART and GLM can produce values for variable 
+importance.
+
+Finally, I'd like to briefly talk about stuff I would redo if I started from
+scratch. This is mostly pertaining to the predictor selection. I'm unsure
+if not selecting variables based on those false zero values was the correct call,
+especially given that I believe some would have made excellent predictors. AIDS
+cases, daily calorie intake and female literacy % I think should be in the model
+as predictors. Ignoring the variables with the false zeroes, I think I could have 
+made a population density variable by dividing the total population values by
+the country area values. This would have opened up a spot for the landlocked 
+variable. Thinking back, whether a country is landlocked or not could have
+lots of impact on GDP per capita. A country having a coastline can unlock 
+numerous economic options. However, for the sake of being able to get 
+all of the models to run smoothly, I think keeping all of the variables numeric 
+and leaving out the logicical and categorical variables still makes the most 
+sense.
